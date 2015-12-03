@@ -1,10 +1,55 @@
 function APlayer(option) {
+    // handle options error
+    if (!('music' in option && 'title' in option.music && 'author' in option.music && 'url' in option.music && 'pic' in option.music)) {
+        throw 'APlayer Error: Music, music.title, music.author, music.url, music.pic are required in options';
+    }
+    if (option.element === null) {
+        throw 'APlayer Error: element option null';
+    }
+
+    this.isMobile = navigator.userAgent.match(/(iPad)|(iPhone)|(iPod)|(android)|(webOS)/i);
+    // compatibility: some mobile browsers don't suppose autoplay
+    if (this.isMobile) {
+        option.autoplay = false;
+    }
+
+    // default options
+    var defaultOption = {
+        element: document.getElementsByClassName('aplayer')[0],
+        narrow: false,
+        autoplay: false,
+        showlrc: false
+    };
+    for (var defaultKey in defaultOption) {
+        if (defaultOption.hasOwnProperty(defaultKey) && !option.hasOwnProperty(defaultKey)) {
+            option[defaultKey] = defaultOption[defaultKey];
+        }
+    }
+
     this.option = option;
 }
 
 APlayer.prototype.init = function () {
     this.element = this.option.element;
     this.music = this.option.music;
+
+    // parser lrc
+    if (this.option.showlrc) {
+        this.lrcTime = [];
+        this.lrcLine = [];
+        var lrcs = this.element.getElementsByClassName('aplayer-lrc-content')[0].innerHTML;
+        var lines = lrcs.split(/\n/);
+        var timeExp = /\[(\d{2}):(\d{2})\.(\d{2})]/;
+        var lrcExp = /](.*)$/;
+        for (var i = 0; i < lines.length; i++) {
+            var oneTime = timeExp.exec(lines[i]);
+            var oneLrc = lrcExp.exec(lines[i]);
+            if (oneTime && oneLrc) {
+                this.lrcTime.push(parseInt(oneTime[1]) * 60 + parseInt(oneTime[2]) + parseInt(oneTime[3]) / 100);
+                this.lrcLine.push(oneLrc[1]);
+            }
+        }
+    }
 
     // fill in HTML
     this.element.innerHTML = ''
@@ -19,9 +64,11 @@ APlayer.prototype.init = function () {
         + '</div>'
         + '<div class="aplayer-info">'
         +     '<div class="aplayer-music">'
-        +         '<a href="javascript:void((function(s,d,e,r,l,p,t,z,c){var%20f=\'http://v.t.sina.com.cn/share/share.php?appkey=2992571369\',u=z||d.location,p=[\'&url=\',e(u),\'&title=\',e(t||d.title),\'&source=\',e(r),\'&sourceUrl=\',e(l),\'&content=\',c||\'gb2312\',\'&pic=\',e(p||\'\')].join(\'\');function%20a(){if(!window.open([f,p].join(\'\'),\'mb\',[\'toolbar=0,status=0,resizable=1,width=440,height=430,left=\',(s.width-440)/2,\',top=\',(s.height-430)/2].join(\'\')))u.href=[f,p].join(\'\');};if(/Firefox/.test(navigator.userAgent))setTimeout(a,0);else%20a();})(screen,document,encodeURIComponent,\'\',\'\',\'' + this.music.pic + '\',\'' + '#APlayer音乐分享# ' + this.music.title + ' - ' + this.music.author + ' \',\'\',\'\'));" title="分享至微博"><i class="demo-icon aplayer-icon-weibo"></i></a>'
         +         '<span class="aplayer-title">' + this.music.title + '</span>'
         +         '<span class="aplayer-author"> - (＞﹏＜)加载中,好累的说...</span>'
+        +     '</div>'
+        +     '<div class="aplayer-lrc">'
+        +         '<div class="aplayer-lrc-contents" style="top: 0"></div>'
         +     '</div>'
         +     '<div class="aplayer-controller">'
         +         '<div class="aplayer-bar-wrap">'
@@ -32,8 +79,8 @@ APlayer.prototype.init = function () {
         +                 '</div>'
         +             '</div>'
         +         '</div>'
-        +         '<span class="aplayer-time">'
-        +             ' - <span class="aplayer-ptime">00:00</span> / <span class="aplayer-dtime">00:00</span>'
+        +         '<div class="aplayer-time">'
+        +             ' - <span class="aplayer-ptime">00:00</span> / <span class="aplayer-dtime">(oﾟ▽ﾟ)</span>'
         +             '<div class="aplayer-volume-wrap">'
         +                 '<i class="demo-icon aplayer-icon-volume-down"></i>'
         +                 '<div class="aplayer-volume-bar-wrap">'
@@ -42,9 +89,22 @@ APlayer.prototype.init = function () {
         +                     '</div>'
         +                 '</div>'
         +             '</div>'
-        +         '</span>'
+        +         '</div>'
         +     '</div>'
         + '</div>';
+
+    // fill in lrc
+    if (this.option.showlrc) {
+        this.element.classList.add('aplayer-withlrc');
+        var lrcHTML = '';
+        this.lrcContents = this.element.getElementsByClassName('aplayer-lrc-contents')[0];
+        for (i = 0; i < this.lrcLine.length; i++) {
+            lrcHTML += '<p>' + this.lrcLine[i] + '</p>';
+        }
+        this.lrcContents.innerHTML = lrcHTML;
+        this.lrcIndex = 0;
+        this.lrcContents.getElementsByTagName('p')[0].classList.add('aplayer-lrc-current');
+    }
 
     // switch to narrow style
     if (this.option.narrow) {
@@ -60,11 +120,14 @@ APlayer.prototype.init = function () {
     // show audio time
     var _self = this;
     this.audio.addEventListener('durationchange', function() {
-        _self.element.getElementsByClassName('aplayer-dtime')[0].innerHTML = _self.secondToTime(_self.audio.duration);
+        if (_self.audio.duration !== 1) {           // compatibility: Android browsers will output 1 at first
+            _self.element.getElementsByClassName('aplayer-dtime')[0].innerHTML = _self.secondToTime(_self.audio.duration);
+        }
     });
 
-    // can play: remove loading style, show loading progress bar
-    this.audio.addEventListener('canplay', function() {
+    // can play, remove loading style, show loading progress bar
+    // compatibility: different mobile browsers have different triggering time, use loadedmetadata event to take the place of canplay event
+    this.audio.addEventListener('loadedmetadata', function () {
         _self.element.getElementsByClassName('aplayer-author')[0].innerHTML = ' - ' + _self.music.author;
         _self.loadedTime = setInterval(function () {
             var percentage = _self.audio.buffered.end(_self.audio.buffered.length - 1) / _self.audio.duration;
@@ -75,6 +138,7 @@ APlayer.prototype.init = function () {
         }, 500);
     });
 
+    // audio download error
     this.audio.addEventListener('error', function () {
         _self.element.getElementsByClassName('aplayer-author')[0].innerHTML = ' - ' + '加载失败 ╥﹏╥';
     });
@@ -117,6 +181,9 @@ APlayer.prototype.init = function () {
         percentage = percentage > 0 ? percentage : 0;
         percentage = percentage < 1 ? percentage : 1;
         _self.updateBar.call(_self, 'played', percentage, 'width');
+        if (_self.option.showlrc) {
+            _self.updateLrc.call(_self, parseFloat(_self.playedBar.style.width) / 100 * _self.audio.duration);
+        }
         _self.element.getElementsByClassName('aplayer-ptime')[0].innerHTML = _self.secondToTime(percentage * _self.audio.duration);
     }
 
@@ -124,10 +191,7 @@ APlayer.prototype.init = function () {
         document.removeEventListener('mouseup', thumbUp);
         document.removeEventListener('mousemove', thumbMove);
         _self.audio.currentTime = parseFloat(_self.playedBar.style.width) / 100 * _self.audio.duration;
-        _self.playedTime = setInterval(function () {
-            _self.updateBar.call(_self, 'played', _self.audio.currentTime / _self.audio.duration, 'width');
-            _self.element.getElementsByClassName('aplayer-ptime')[0].innerHTML = _self.secondToTime(_self.audio.currentTime);
-        }, 100);
+        _self.play();
     }
 
     // control volume
@@ -204,6 +268,9 @@ APlayer.prototype.play = function () {
     var _self = this;
     this.playedTime = setInterval(function () {
         _self.updateBar.call(_self, 'played', _self.audio.currentTime / _self.audio.duration, 'width');
+        if (_self.option.showlrc) {
+            _self.updateLrc.call(_self);
+        }
         _self.element.getElementsByClassName('aplayer-ptime')[0].innerHTML = _self.secondToTime(_self.audio.currentTime);
     }, 100);
 };
@@ -221,6 +288,23 @@ APlayer.prototype.updateBar = function (type, percentage, direction) {
     percentage = percentage > 0 ? percentage : 0;
     percentage = percentage < 1 ? percentage : 1;
     this[type + 'Bar'].style[direction] = percentage * 100 + '%';
+};
+
+// update lrc
+APlayer.prototype.updateLrc = function (currentTime) {
+    if (!currentTime) {
+        currentTime = this.audio.currentTime;
+    }
+    if (currentTime < this.lrcTime[this.lrcIndex] || currentTime >= this.lrcTime[this.lrcIndex + 1]) {
+        for (var i = 0; i < this.lrcTime.length; i++) {
+            if (currentTime >= this.lrcTime[i] && (!this.lrcTime[i + 1] || currentTime < this.lrcTime[i + 1])) {
+                this.lrcIndex = i;
+                this.lrcContents.style.top = -this.lrcIndex * 20 + 'px';
+                this.lrcContents.getElementsByClassName('aplayer-lrc-current')[0].classList.remove('aplayer-lrc-current');
+                this.lrcContents.getElementsByTagName('p')[i].classList.add('aplayer-lrc-current');
+            }
+        }
+    }
 };
 
 // format second to 00:00
